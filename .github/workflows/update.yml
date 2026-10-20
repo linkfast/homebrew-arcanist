@@ -1,0 +1,42 @@
+name: Update
+
+# Keeps Casks/arcanist.rb on the newest Arcanist release that has macOS disk images: every hour, or by hand
+# (Actions → Update → Run workflow). The cask is checked on a Mac before it is pushed.
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update
+
+jobs:
+  update:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - id: cask
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 scripts/update_cask.py
+      - name: Check the cask
+        if: steps.cask.outputs.changed == 'true'
+        run: |
+          brew tap-new --no-git local/check >/dev/null
+          mkdir -p "$(brew --repository local/check)/Casks"
+          cp Casks/arcanist.rb "$(brew --repository local/check)/Casks/"
+          brew style local/check/arcanist
+          # Reported, not blocking: it may object to a pre-release or the missing notarization.
+          brew audit --cask --online local/check/arcanist || echo "::warning::brew audit reported problems"
+      - name: Push
+        if: steps.cask.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Casks/arcanist.rb
+          git commit -q -m "arcanist $(sed -n 's/^  version "\(.*\)"/\1/p' Casks/arcanist.rb)"
+          git push
